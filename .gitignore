@@ -1,0 +1,32 @@
+# ---- generated inspection artefacts (reproducible from the pipeline) -------
+# exclude the contents but keep the directory + its placeholder, so a fresh
+# clone shows the layout and DATA_DIR always has a place to land
+data/*
+!data/.gitkeep
+
+# ---- python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- platformio / arduino --------------------------------------------------
+esp32_cam_ov2640/.pio/
+esp32_cam_ov2640/.pioenvs/
+esp32_cam_ov2640/.vscode/
+*.bin
+*.elf
+
+# ---- os / editors ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+
+# ---- large model artefacts -------------------------------------------------
+*.db
+colmap_workspace/
