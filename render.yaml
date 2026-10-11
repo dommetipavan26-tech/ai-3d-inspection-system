@@ -1,0 +1,55 @@
+# ============================================================================
+#  Render blueprint -- AI 3D Structural Inspection System
+#  Deploy with:  Render dashboard -> New -> Blueprint -> point at this repo
+# ============================================================================
+services:
+  - type: web
+    name: ai-3d-inspection-system
+    runtime: python
+    plan: standard                # the reconstruction + CV stages need >512 MB
+    region: oregon
+    branch: main
+    autoDeploy: true
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: >-
+      uvicorn main:app --host 0.0.0.0 --port $PORT
+      --workers 1 --timeout-keep-alive 120
+      --limit-concurrency 32
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATA_DIR
+        value: /var/data              # persistent disk mount point
+      - key: OPENCV_IO_MAX_IMAGE_PIXELS
+        value: "0"                    # allow the 1600x1200 UXGA frames
+      - key: OMP_NUM_THREADS
+        value: "2"
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      # Optional: lock the ESP32 upload endpoint.  Set the same value in the
+      # firmware's INSPECTION_TOKEN define.
+      - key: ESP32_UPLOAD_TOKEN
+        sync: false
+      # Optional: path to a COLMAP binary if you bundle one in the image
+      - key: COLMAP_BINARY
+        sync: false
+    disk:
+      name: inspection-data
+      mountPath: /var/data
+      sizeGB: 10
+
+# ---------------------------------------------------------------------------
+#  Notes
+#  ---------------------------------------------------------------------------
+#  * The persistent disk keeps data/captures, the COLMAP sparse model and the
+#    digital twin artefacts alive across deploys, so an inspection session is
+#    not lost when the service restarts.
+#  * Native COLMAP is NOT part of the Python runtime: the hybrid engine detects
+#    it automatically when present and otherwise runs the pure-OpenCV
+#    SIFT + RANSAC + PnP pipeline.  To enable the native path, deploy the
+#    Dockerfile in this repository instead (it installs colmap via apt).
+#  * Free-tier plans recycle the service; use at least "standard" for a
+#    reliable 8-view reconstruction run.

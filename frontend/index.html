@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AI 3D Structural Inspection System · Digital Twin</title>
+<meta name="description" content="8-view ESP32-CAM capture, COLMAP 3D reconstruction, AI defect analysis and an interactive WebGL digital twin for concrete structures."/>
+<link rel="stylesheet" href="/static/styles.css"/>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b6efd'/><path d='M16 5v22M8 12h16M9 21h14' stroke='white' stroke-width='2.4' stroke-linecap='round'/></svg>"/>
+</head>
+<body>
+
+<!-- =======================  HEADER  ======================= -->
+<header id="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#0b6efd"/>
+      <path d="M16 5v22M8 12h16M9 21h14" stroke="#fff" stroke-width="2.4"
+            stroke-linecap="round" fill="none"/>
+    </svg>
+    <div>
+      <div class="title">AI 3D Structural Inspection System</div>
+      <div class="subtitle">
+        <span id="hdr-structure">PIER P-04 / COLUMN C-102</span> ·
+        <span id="hdr-sensor">OV2640 UXGA</span> ·
+        <span id="hdr-mode">hybrid COLMAP + OpenCV SfM</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-cluster">
+    <div class="stat" title="Structural Health Index (0-100), computed in step 3">
+      <span class="stat-label">SHI</span>
+      <span class="stat-value" id="hdr-shi">—</span>
+      <span class="stat-grade" id="hdr-grade">not run</span>
+    </div>
+    <div class="stat" title="Registered images / sparse points / dense points">
+      <span class="stat-label">MODEL</span>
+      <span class="stat-value" id="hdr-model">—</span>
+      <span class="stat-grade" id="hdr-model-sub">no reconstruction</span>
+    </div>
+    <div class="stat" title="Detected defects by class">
+      <span class="stat-label">DEFECTS</span>
+      <span class="stat-value" id="hdr-defects">—</span>
+      <span class="stat-grade" id="hdr-defects-sub">no detections</span>
+    </div>
+    <div class="stat" title="ESP32-CAM field nodes reported by the ingestion API">
+      <span class="stat-label">NODES</span>
+      <span class="stat-value" id="hdr-nodes">8</span>
+      <span class="stat-grade" id="hdr-nodes-sub">idle</span>
+    </div>
+  </div>
+
+  <div class="header-actions">
+    <button id="btn-run" class="btn primary" title="Run all four steps end to end">
+      <span class="dot-live"></span> Run full inspection
+    </button>
+    <a id="link-report" class="btn ghost" href="/report" target="_blank" rel="noopener"
+       title="Printable ACI/EN inspection report">
+      Report
+    </a>
+    <button id="btn-help" class="btn ghost" title="Help">?</button>
+  </div>
+</header>
+
+<main>
+  <!-- =======================  3D VIEWPORT  ======================= -->
+  <section id="viewport-wrap">
+    <canvas id="gl"></canvas>
+
+    <div id="view-hud">
+      <div class="hud-row"><span class="k">VIEW</span><span id="hud-cam">—</span></div>
+      <div class="hud-row"><span class="k">STAGE</span><span id="hud-stage">idle</span></div>
+      <div class="hud-row"><span class="k">POINTS</span><span id="hud-points">—</span></div>
+      <div class="hud-row"><span class="k">RAYCAST</span><span id="hud-rays">—</span></div>
+    </div>
+
+    <div id="legend">
+      <div class="lg-title">Defect classes</div>
+      <div class="lg-item"><i style="background:#ff2d2d"></i>Diagonal shear crack</div>
+      <div class="lg-item"><i style="background:#ff8c00"></i>Rebar corrosion / rust</div>
+      <div class="lg-item"><i style="background:#ffd400"></i>Concrete spalling</div>
+      <div class="lg-item"><i style="background:#4fc3f7"></i>Efflorescence / seepage</div>
+      <div class="lg-sep"></div>
+      <div class="lg-item"><i style="background:#7cf7c0"></i>ESP32-CAM node</div>
+      <div class="lg-item"><i style="background:#b388ff"></i>Triangulation ray</div>
+    </div>
+
+    <div id="toast" class="hidden"></div>
+  </section>
+
+  <!-- =======================  SIDE PANEL  ======================= -->
+  <aside id="panel">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="capture" role="tab">1 · Capture</button>
+      <button class="tab" data-tab="model" role="tab">2 · 3D model</button>
+      <button class="tab" data-tab="analysis" role="tab">3 · Analysis</button>
+      <button class="tab" data-tab="twin" role="tab">4 · Digital twin</button>
+    </nav>
+
+    <!-- ---------- STEP 1 ---------- -->
+    <div class="tabpane active" id="pane-capture">
+      <h2>Step 1 · 16-pin ESP32-CAM (OV2640) capture</h2>
+      <p class="muted">
+        Eight orbital nodes, 45° apart at 2.6 m, each capturing a 1600×1200 OV2640
+        frame. Field wiring uses only <b>5V</b> and <b>GND</b>; GPIO 33 is the
+        countdown LED and GPIO 4 the flash LED. Live nodes POST to
+        <code>/api/esp32/upload</code> and poll <code>/api/esp32/command</code> every 3 s.
+      </p>
+
+      <div class="btn-row">
+        <button class="btn primary" id="btn-sweep">Orbital capture sweep</button>
+        <button class="btn" id="btn-upload">Upload photos…</button>
+        <input type="file" id="file-input" accept="image/*" multiple hidden/>
+      </div>
+
+      <h3>Device fleet</h3>
+      <div class="fleet" id="fleet"></div>
+
+      <h3>Captured views</h3>
+      <div class="shots" id="shots"></div>
+
+      <details class="fold">
+        <summary>Arduino firmware (16-pin AI-Thinker ESP32-CAM)</summary>
+        <div class="btn-row">
+          <a class="btn tiny" href="/api/firmware" target="_blank" rel="noopener">esp32_cam_inspection.ino</a>
+          <a class="btn tiny" href="/api/platformio" target="_blank" rel="noopener">platformio.ini</a>
+        </div>
+        <pre id="fw-snippet" class="code">loading…</pre>
+      </details>
+    </div>
+
+    <!-- ---------- STEP 2 ---------- -->
+    <div class="tabpane" id="pane-model">
+      <h2>Step 2 · COLMAP 3D reconstruction</h2>
+      <p class="muted">
+        Native <code>colmap</code> is used when the binary is present
+        (<code>feature_extractor → exhaustive_matcher → mapper</code>); otherwise the
+        hybrid engine runs OpenCV SIFT + RANSAC epipolar matching and an
+        incremental PnP solver, then similarity-aligns the model to the surveyed rig
+        to recover metric scale.
+      </p>
+
+      <div class="btn-row">
+        <button class="btn primary" id="btn-recon">Reconstruct</button>
+        <button class="btn" id="btn-cameras">Load cameras</button>
+      </div>
+
+      <div class="kv" id="recon-kv"></div>
+
+      <h3>Epipolar match matrix</h3>
+      <div class="matrix-wrap"><table class="matrix" id="pair-matrix"></table></div>
+
+      <h3>Downloads</h3>
+      <div class="btn-row wrap">
+        <a class="btn tiny" href="/api/download/cameras">cameras.txt</a>
+        <a class="btn tiny" href="/api/download/images">images.txt</a>
+        <a class="btn tiny" href="/api/download/points3d">points3D.txt</a>
+        <a class="btn tiny" href="/api/download/twin_ply">digital_twin.ply</a>
+        <a class="btn tiny" href="/api/download/twin_obj">digital_twin.obj</a>
+        <a class="btn tiny" href="/api/download/reconstruction_json">reconstruction.json</a>
+      </div>
+    </div>
+
+    <!-- ---------- STEP 3 ---------- -->
+    <div class="tabpane" id="pane-analysis">
+      <h2>Step 3 · AI defect analysis &amp; report</h2>
+      <p class="muted">
+        Multi-stage OpenCV detection — scale-space local contrast (cracks), HSV
+        hue/red-dominance (corrosion), aggregate texture energy (spalling) and
+        neutral local brightening (efflorescence) — followed by ACI 224R / ACI 201.1R
+        severity grading and a structural health index.
+      </p>
+
+      <div class="btn-row">
+        <button class="btn primary" id="btn-analyse">Run analysis</button>
+        <a class="btn" id="link-report2" href="/api/report.html" target="_blank"
+           rel="noopener">Printable report</a>
+      </div>
+
+      <div class="shi-card">
+        <div class="shi-dial">
+          <span id="shi-value">—</span>
+          <small>SHI / 100</small>
+        </div>
+        <div class="shi-side">
+          <div class="shi-grade" id="shi-grade">not run</div>
+          <div class="muted" id="shi-action">Run the analysis to compute the index.</div>
+          <div class="shi-bar"><i id="shi-bar-fill"></i></div>
+        </div>
+      </div>
+
+      <div class="kv" id="analysis-kv"></div>
+
+      <h3>Findings</h3>
+      <div id="findings"></div>
+
+      <h3>Detection quality vs. ground truth</h3>
+      <p class="muted tiny">
+        Pixel-level precision / recall / F1 against the simulated label maps
+        (a bounding-box IoU is meaningless for a 4 mm crack).
+      </p>
+      <div class="kv" id="quality-kv"></div>
+    </div>
+
+    <!-- ---------- STEP 4 ---------- -->
+    <div class="tabpane" id="pane-twin">
+      <h2>Step 4 · 2D→3D ray back-projection</h2>
+      <p class="muted">
+        Each 2D defect centroid is back-projected as a world ray
+        <code>d = R<sup>T</sup>K<sup>-1</sup>[u,v,1]<sup>T</sup></code>, intersected with
+        the fitted cylinder, then re-solved by least-squares triangulation over all
+        contributing views to give a metric 3D point with an uncertainty.
+      </p>
+
+      <h3>Display</h3>
+      <div class="toggles">
+        <label><input type="checkbox" id="t-cloud" checked/> Dense point cloud</label>
+        <label><input type="checkbox" id="t-color" checked/> Colour-code defects</label>
+        <label><input type="checkbox" id="t-mesh" checked/> Surface mesh</label>
+        <label><input type="checkbox" id="t-rebar"/> Internal rebar cage</label>
+        <label><input type="checkbox" id="t-cams" checked/> 8 camera frustums</label>
+        <label><input type="checkbox" id="t-rays" checked/> Triangulation rays</label>
+        <label><input type="checkbox" id="t-pulse" checked/> Pulsing defect markers</label>
+        <label><input type="checkbox" id="t-grid" checked/> Ground grid</label>
+        <label><input type="checkbox" id="t-axes" checked/> Axes</label>
+      </div>
+
+      <h3>Back-projected defects</h3>
+      <div class="btn-row wrap">
+        <button class="btn tiny" id="btn-fit">Fit view</button>
+        <button class="btn tiny" id="btn-spin">Auto-rotate</button>
+        <button class="btn tiny" id="btn-camcycle">Cycle views</button>
+      </div>
+      <div class="kv" id="twin-kv"></div>
+      <div id="cluster-list"></div>
+    </div>
+  </aside>
+
+  <!-- =======================  FOOTER BAR  ======================= -->
+  <footer id="footer">
+    <div class="file-strip" id="file-strip"></div>
+    <div class="foot-actions">
+      <button class="btn tiny" id="btn-refresh">Refresh state</button>
+      <button class="btn tiny danger" id="btn-reset">Reset artefacts</button>
+      <a class="btn tiny" href="/api/docs" target="_blank" rel="noopener">API docs</a>
+      <span class="muted tiny" id="foot-build"></span>
+    </div>
+  </footer>
+</main>
+
+<!-- =======================  PROGRESS MODAL  ======================= -->
+<div id="modal" class="hidden">
+  <div class="modal-card">
+    <h3 id="modal-title">Running inspection pipeline</h3>
+    <div class="spinner"><i></i></div>
+    <pre id="modal-log" class="code"></pre>
+    <div class="modal-actions">
+      <button class="btn" id="btn-modal-close" disabled>Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- =======================  HELP MODAL  ======================= -->
+<div id="help" class="hidden">
+  <div class="modal-card wide">
+    <h3>How the four steps fit together</h3>
+    <ol class="help-list">
+      <li><b>Capture</b> — eight 16-pin ESP32-CAM nodes (OV2640, 1600×1200) photograph
+          the pier from 45° orbit positions. Only 5 V and GND are wired in the field.</li>
+      <li><b>Reconstruction</b> — CLAHE → SIFT → ratio-test matching → RANSAC
+          fundamental/essential matrix → PnP incremental SfM (or native COLMAP),
+          then a similarity alignment to the surveyed rig for metric scale.</li>
+      <li><b>Analysis</b> — four parallel detectors, ACI/EN severity grading, a
+          Structural Health Index and a full remediation report.</li>
+      <li><b>Back-projection</b> — defect centroids become world rays, are intersected
+          with the fitted cylinder and re-solved by multi-view triangulation, then
+          colour-coded in the point cloud and the 3D twin.</li>
+    </ol>
+    <p class="muted">Mouse: drag to orbit · wheel to zoom · right-drag to pan.
+       Click a defect cluster in the list to fly to it.</p>
+    <div class="modal-actions"><button class="btn" id="btn-help-close">Close</button></div>
+  </div>
+</div>
+
+<script src="/static/three.min.js"></script>
+<script src="/static/OrbitControls.js"></script>
+<script src="/static/PLYLoader.js"></script>
+<script src="/static/OBJLoader.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

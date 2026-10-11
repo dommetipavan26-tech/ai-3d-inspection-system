@@ -1,0 +1,26 @@
+# ============================================================================
+#  AI 3D Structural Inspection System -- runtime dependencies
+#  ---------------------------------------------------------------------------
+#  These are the exact versions the pipeline was built and validated against
+#  (full 4-step run, end-to-end, on a clean data directory).  Everything here
+#  installs from binary wheels: no compiler, no system OpenCV needed, and
+#  opencv-python-headless keeps the container/X-server requirements out.
+#
+#  Native COLMAP is OPTIONAL: install its CLI (apt install colmap) and
+#  backend/colmap_engine.py uses it automatically, otherwise the built-in
+#  OpenCV SIFT / RANSAC / PnP photogrammetry path runs instead.
+# ============================================================================
+
+# ---- web service -----------------------------------------------------------
+fastapi==0.143.0                  # REST surface + OpenAPI docs
+uvicorn[standard]==0.54.0         # ASGI server (Render start command)
+python-multipart==0.0.32          # multipart/form-data -> ESP32-CAM JPEG uploads
+gunicorn==23.0.0                  # optional process manager if you prefer it
+
+# ---- numerical / vision core ----------------------------------------------
+numpy==2.4.6
+opencv-python-headless==5.0.0.93  # detector, SIFT/ORB, PnP, triangulation (needs numpy>=2)
+Pillow==12.3.0                    # report thumbnails / image metadata
+
+# ---- reporting ------------------------------------------------------------
+Jinja2==3.1.6                     # printable HTML inspection report
